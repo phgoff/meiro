@@ -65,6 +65,9 @@ func TestADownloadedAlbumPlaysOffline(t *testing.T) {
 		t.Fatalf("%v: %q", err, tt.Texts())
 	}
 	tt.Frame()
+	// The index is written off the main thread, and a write under way keeps
+	// its own temporary file in the folder, so wait for it before counting.
+	a.downloads.writer.Wait()
 	if !tt.HasText("Downloaded") || len(audioFiles(t, dir)) != 1 {
 		t.Fatalf("the album did not download: files=%q texts=%q", audioFiles(t, dir), tt.Texts())
 	}
@@ -79,7 +82,6 @@ func TestADownloadedAlbumPlaysOffline(t *testing.T) {
 	if a.path() != "/album/MPREb_test" || tt.HasText("Albums and playlists") || !tt.HasText("Album Track One") {
 		t.Fatalf("the album page took the Downloads page's content: path=%q texts=%q", a.path(), tt.Texts())
 	}
-	a.downloads.writer.Wait()
 
 	// The network goes away, and the app starts again from what it saved.
 	a.player.Stop()
@@ -113,6 +115,7 @@ func TestADownloadedAlbumPlaysOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
+	a.downloads.writer.Wait()
 	if files := audioFiles(t, dir); len(files) != 0 || !tt.HasText("Download") {
 		t.Fatalf("removing the download should delete its audio: files=%q texts=%q", files, tt.Texts())
 	}
