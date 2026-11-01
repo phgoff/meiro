@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Playing a large playlist before it finishes loading keeps every song.** Its remaining songs join the playback queue before Auto-play recommendations.
+
+- **Auto-play continues after a playlist ends.** When its queue runs out, recommendations start from the final song instead of reopening the original playlist.
+
 ## [0.5.2] - 2026-11-01
 
 ### Added

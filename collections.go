@@ -141,10 +141,21 @@ func (a *app) withCollectionTracks(item youtube.MusicItem, key string, then func
 			// The guard above leaves the playlist of the kinds that are not
 			// its own.
 		}
-		// The first page of a playlist holds the playlist itself. Draining
-		// it reads on into the shelf of suggestions beside it, which never
-		// ends, and long outlasts the read: the page reads it the same way.
-		return client.GetPlaylist(ctx, target.ID)
+		result, err := client.GetPlaylist(ctx, target.ID)
+		if err != nil {
+			return nil, err
+		}
+		token, _ := playlistContinuations(result.Sections, result.ContinuationToken)
+		more, err := readPlaylistRest(ctx, token, client.ContinueBrowse)
+		if err != nil {
+			return nil, err
+		}
+		if len(result.Sections) > 0 {
+			result.Sections = append(result.Sections, youtube.MusicSection{Items: more.items})
+		} else {
+			result.Items = append(result.Items, more.items...)
+		}
+		return result, nil
 	}, func(result *youtube.BrowseResult, err error) {
 		a.openingKey = ""
 		if downloaded, ok := a.offlinePage(target.ID); ok && errors.Is(err, youtube.ErrUnreachable) {
@@ -186,4 +197,29 @@ func tracksOf(result *youtube.BrowseResult, art string) []youtube.MusicItem {
 		songs = append(songs, song)
 	}
 	return songs
+}
+
+// loadPlayingPlaylistRest lets an early play keep reading the playlist even
+// if its page is left. Replacing the queue cancels this work.
+func (a *app) loadPlayingPlaylistRest() {
+	token := a.queue.playlistMore
+	if token == "" || a.queueRest.busy() {
+		return
+	}
+	client := a.client()
+	startTask(a, &a.queueRest, openTimeout, func(ctx context.Context) (moreItems, error) {
+		return readPlaylistRest(ctx, token, client.ContinueBrowse)
+	}, func(more moreItems, err error) {
+		if err != nil {
+			a.notice = "Could not load the rest of the playlist: " + firstLine(err.Error())
+			return
+		}
+		a.queue.playlistMore = ""
+		for _, item := range a.visibleItems(more.items) {
+			a.queue.insert(item, false, a.settings.AutoPlay)
+		}
+		a.clearQueueSelection()
+		a.warmNext()
+		a.ensureUpNext()
+	})
 }

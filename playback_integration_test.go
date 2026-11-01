@@ -587,6 +587,14 @@ func TestAutoPlayRetriesRecommendationsWhenChosenQueueRunsOut(t *testing.T) {
 			count := requests.Add(1)
 			response := `{"contents":{"playlistPanelRenderer":{"contents":[]}}}`
 			if count == 2 {
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					return nil, err
+				}
+				if !strings.Contains(string(body), `"playlistId":"RDAMVMlast"`) || strings.Contains(string(body), `"playlistIndex"`) {
+					t.Errorf("exhausted playlist did not start the last track's mix: %s", body)
+					return nil, errors.New("expected a fresh mix after the playlist")
+				}
 				response = `{"contents":{"playlistPanelRenderer":{"contents":[{"playlistPanelVideoRenderer":{"videoId":"recommended","title":{"runs":[{"text":"Recommended track"}]}}}]}}}`
 			}
 			return &http.Response{
@@ -601,7 +609,8 @@ func TestAutoPlayRetriesRecommendationsWhenChosenQueueRunsOut(t *testing.T) {
 	a.account.public = client
 	a.settings.AutoPlay = true
 	q := tracks("first", "last")
-	a.play(q[0], q)
+	index := 0
+	a.playFrom(q[0], q, 0, youtube.UpNextOptions{PlaylistID: "PLchosen", PlaylistIndex: &index}, "Chosen playlist")
 	if requests.Load() != 1 || a.queue.len() != 2 {
 		t.Fatalf("initial fetch: requests=%d queue=%v", requests.Load(), ids(a.queue.items))
 	}

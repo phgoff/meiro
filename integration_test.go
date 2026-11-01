@@ -2137,3 +2137,119 @@ func TestAPlaylistLoadsSongsFromItsShelfBeforeSuggestions(t *testing.T) {
 		t.Fatalf("playlist has %d suggestions, want 7 kept separate", got)
 	}
 }
+
+func TestPlayingBeforeThePlaylistLoadsKeepsItsRemainingSongs(t *testing.T) {
+	for _, scenario := range []struct {
+		id       string
+		replace  bool
+		pickNext bool
+	}{
+		{"VLPL_paginated", false, false},
+		{"VLPL_paginated", true, false},
+		{"VLPL_page_token", false, false},
+		{"VLPL_paginated", false, true},
+	} {
+		t.Run(scenario.id+strconv.FormatBool(scenario.replace)+strconv.FormatBool(scenario.pickNext), func(t *testing.T) {
+			resetFakes()
+			a, _ := playbackApp(t)
+			var pending []func()
+			var heldPage, heldQueue bool
+			a.run = func(work func()) {
+				if a.pageSimilar.busy() && !heldPage {
+					heldPage = true
+					pending = append(pending, work)
+					return
+				}
+				if a.queueRest.busy() && !heldQueue {
+					heldQueue = true
+					pending = append(pending, work)
+					return
+				}
+				work()
+			}
+			a.router.Push("/playlist/" + scenario.id)
+			tt := ui.NewTester(a.view, 1000, 700)
+			tt.Frame()
+			if len(a.page.playable) != 100 {
+				t.Fatalf("first page has %d songs, want 100", len(a.page.playable))
+			}
+			if err := tt.Click("Play"); err != nil {
+				t.Fatal(err)
+			}
+			tt.Frame()
+			if a.queue.len() != 100 || a.current.VideoID != "track-0" {
+				t.Fatalf("early playback: current=%q queue=%d", a.current.VideoID, a.queue.len())
+			}
+			if scenario.pickNext {
+				if err := tt.Click("Up next"); err != nil {
+					t.Fatal(err)
+				}
+				tt.Frame()
+				if err := tt.Click("Track 1"); err != nil {
+					t.Fatal(err)
+				}
+				tt.Frame()
+			}
+			// Leaving the page must not lose its queue's pending songs.
+			a.router.Push("/album/MPREb_test")
+			tt.Frame()
+			if scenario.replace {
+				if err := tt.Click("Album Track One"); err != nil {
+					t.Fatal(err)
+				}
+				tt.Frame()
+			}
+			for len(pending) > 0 {
+				work := pending[0]
+				pending = pending[1:]
+				work()
+			}
+			tt.Frame()
+			if scenario.replace {
+				if a.queue.len() != 1 || a.current.VideoID != "vid-3" {
+					t.Fatalf("old playlist changed the replacement queue: %v", ids(a.queue.items))
+				}
+				return
+			}
+			wantCurrent, wantRemaining := "track-0", 145
+			if scenario.pickNext {
+				wantCurrent, wantRemaining = "track-1", 144
+			}
+			if a.queue.len() != 146 || a.queue.remaining() != wantRemaining || a.current.VideoID != wantCurrent {
+				t.Fatalf("completed playback: current=%q queue=%d remaining=%d", a.current.VideoID, a.queue.len(), a.queue.remaining())
+			}
+			if got := a.queue.at(145).VideoID; got != "track-145" {
+				t.Fatalf("final song = %q, want track-145", got)
+			}
+		})
+	}
+}
+
+func TestPlayingAPlaylistCardIncludesEverySong(t *testing.T) {
+	for _, onPage := range []bool{false, true} {
+		t.Run(strconv.FormatBool(onPage), func(t *testing.T) {
+			resetFakes()
+			a, _ := playbackApp(t)
+			if onPage {
+				held := false
+				a.run = func(work func()) {
+					if a.pageSimilar.busy() && !held {
+						held = true
+						return
+					}
+					work()
+				}
+				a.router.Push("/playlist/PL_paginated")
+				tt := ui.NewTester(a.view, 1000, 700)
+				tt.Frame()
+			}
+			a.playCollection(youtube.MusicItem{PlaylistID: "PL_paginated", Title: "Large playlist"}, "large-playlist", false)
+			if a.queue.len() != 146 || a.queue.remaining() != 145 {
+				t.Fatalf("card playback: queue=%d remaining=%d, want 146 and 145", a.queue.len(), a.queue.remaining())
+			}
+			if got := a.queue.at(145).VideoID; got != "track-145" {
+				t.Fatalf("final song = %q, want track-145", got)
+			}
+		})
+	}
+}

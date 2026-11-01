@@ -36,7 +36,8 @@ type queue struct {
 	shuffleKept []youtube.MusicItem
 	// source names where the chosen tracks came from, for the queue's
 	// heading.
-	source string
+	source       string
+	playlistMore string
 }
 
 func newQueue() queue { return queue{recStart: -1, generated: map[string]struct{}{}} }
@@ -234,6 +235,7 @@ func (q *queue) dropMarkedAI(exclude func(youtube.MusicItem) bool) bool {
 // clearUpcoming drops every track that follows the current one, the
 // generated tracks included, and reports whether there were any.
 func (q *queue) clearUpcoming() bool {
+	q.playlistMore = ""
 	if q.remaining() < 1 {
 		return false
 	}

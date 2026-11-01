@@ -79,6 +79,7 @@ type playback struct {
 	preloadFailed string
 	preloadFor    string
 	upNext        upNextState
+	queueRest     task
 	// opening is the album or playlist whose songs are being read to play
 	// it, so that a second press does not read them again.
 	opening    task
@@ -112,6 +113,7 @@ func (a *app) playFrom(item youtube.MusicItem, tracks []youtube.MusicItem, index
 	if item.VideoID == "" {
 		return
 	}
+	a.queueRest.stop()
 	a.clearQueueSelection()
 	a.queue.replace(item, tracks, index, source)
 	if a.settings.ExcludeAIGenerated {
@@ -122,7 +124,11 @@ func (a *app) playFrom(item youtube.MusicItem, tracks []youtube.MusicItem, index
 	a.learnCredits(item)
 	options.VideoID = item.VideoID
 	a.resetUpNext(options)
+	if r, id := a.route(); r.id == routePlaylist && id == options.PlaylistID && len(tracks) == len(a.page.playable) {
+		a.queue.playlistMore = a.page.playlistMore
+	}
 	if a.loading() && a.current.VideoID == item.VideoID {
+		a.loadPlayingPlaylistRest()
 		a.ensureUpNext()
 		return // this track is already on its way
 	}
@@ -228,6 +234,7 @@ func (a *app) enterTrack(item youtube.MusicItem, automatic bool) (time.Duration,
 
 // afterEnter is what a track entered asks for besides its audio.
 func (a *app) afterEnter(item youtube.MusicItem, changed bool) {
+	a.loadPlayingPlaylistRest()
 	if changed {
 		a.notch.resetLyrics()
 	}
@@ -362,6 +369,7 @@ func (a *app) shiftInQueue(index, delta int) {
 
 // clearUpcoming empties the queue after the track playing.
 func (a *app) clearUpcoming() {
+	a.queueRest.stop()
 	if a.queue.clearUpcoming() {
 		a.notice = "Cleared the queue"
 		a.queueChanged()
