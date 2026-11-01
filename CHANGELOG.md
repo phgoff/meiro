@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Meiro can skip AI-generated songs.** Turn on Exclude AI-generated songs under Settings → Playback. Meiro checks YouTube's AI label before a track starts and skips labelled songs in queues and auto-play. Unlabelled AI music may still play.
 - **Word-synced lyrics from Better Lyrics.** Meiro asks Better Lyrics before YouTube Music and LRCLIB, and lights each word of a line as the singer reaches it, so a line fills in as it is sung. The Lyrics tab names the source it used.
 
+### Changed
+
+- **Playback speed sits in the player's overflow menu.** The speed is no longer a button of its own in the player bar, Now Playing or the tray mini player. The overflow (⋮) button opens a menu that shows the speed in force, and its Playback speed row opens the speeds from 0.5× to 3×. The bar has more room and the mini player's volume slider is longer.
+
 ### Fixed
 
 - **Songs added to a playlist appear without restarting Meiro.** Adding a song refreshes an open destination playlist and clears stale cached pages before you revisit it.
