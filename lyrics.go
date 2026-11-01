@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/elianiva/meiro/internal/betterlyrics"
 	"github.com/elianiva/meiro/internal/lrclib"
+	"github.com/elianiva/meiro/internal/lyrics"
 	"github.com/elianiva/meiro/m3"
 	"github.com/elianiva/meiro/youtube"
 )
@@ -17,10 +19,14 @@ import (
 type lyricsState struct {
 	load    task
 	videoID string
+	// total is the length the lyrics were looked up with, and 0 when the
+	// track's own length was not known yet. Better Lyrics finds its cached
+	// lyrics by it, so a lookup without one is made again once it is.
+	total time.Duration
 	// text is the lyrics as plain text, and synced the same with the moment
-	// each line is sung, when LRCLIB has them timed.
+	// each line is sung and, when the source times them, each word.
 	text   string
-	synced []lrclib.Line
+	synced []lyrics.Line
 	footer string
 	err    string
 	// followed is the line the view last scrolled to, -1 before the first,
@@ -32,27 +38,39 @@ type lyricsState struct {
 	settled       bool
 }
 
-// loadedLyrics is what the lyrics of a track come to, from LRCLIB or, when
-// it has none, from YouTube Music.
+// loadedLyrics is what the lyrics of a track come to, from Better Lyrics,
+// YouTube Music or LRCLIB.
 type loadedLyrics struct {
 	text, footer string
-	synced       []lrclib.Line
+	synced       []lyrics.Line
 }
 
-// loadLyrics fetches the lyrics of the current track, once.
+// loadLyrics fetches the lyrics of the current track, once per track and once
+// more once its length is known.
 func (a *app) loadLyrics() {
 	l := &a.nowPlaying.lyrics
 	id := a.current.VideoID
-	if id == "" || l.videoID == id {
+	if id == "" || (l.videoID == id && (l.total > 0 || a.total <= 0)) {
 		return
 	}
-	l.videoID, l.text, l.footer, l.err, l.synced, l.followed = id, "", "", "", nil, -1
-	a.nowPlaying.lyricsScroll.Y = 0
-	l.centerPending, l.settled = false, false
-	client, item, total := a.client(), a.current, a.total
-	fetch := a.lyricsSource
+	// A track looked up without its length keeps what it has while the
+	// lookup is made again, so the lyrics do not blink back to loading.
+	if again := l.videoID == id; !again {
+		l.text, l.footer, l.err, l.synced, l.followed = "", "", "", nil, -1
+		a.nowPlaying.lyricsScroll.Y = 0
+		l.centerPending, l.settled = false, false
+	}
+	client, total := a.client(), a.total
+	item := a.current
+	if item.Artist == "" {
+		// The list the track played from may have left its artist out while
+		// another named it, and every lyrics source matches on it.
+		item = a.withKnownCredits(item)
+	}
+	l.videoID, l.total = id, total
+	sources := lyricSources{betterLyrics: a.betterLyrics, lrclib: a.lyricsSource}
 	startTask(a, &l.load, panelTimeout, func(ctx context.Context) (loadedLyrics, error) {
-		return findLyrics(ctx, fetch, client, item, total)
+		return findLyrics(ctx, sources, client, item, total)
 	}, func(found loadedLyrics, err error) {
 		l.text, l.footer, l.synced = found.text, found.footer, found.synced
 		switch {
@@ -67,33 +85,70 @@ func (a *app) loadLyrics() {
 	})
 }
 
-// findLyrics finds a track's lyrics, timed when it can. YouTube Music is asked
-// first, as it is the service the track plays from, then LRCLIB, and the plain
-// text of YouTube Music is the last resort. A source that fails is not an
-// error: the next is tried, and no lyrics at all is an empty result.
-func findLyrics(ctx context.Context, fetch lyricsSource, client *youtube.Client, item youtube.MusicItem, total time.Duration) (loadedLyrics, error) {
+// refreshLyrics looks the lyrics of the current track up again once the
+// track's own length is known, which Better Lyrics keys its cache on. It only
+// does so for a track whose lyrics were already asked for: a track nobody has
+// shown lyrics for is left until they are.
+func (a *app) refreshLyrics() {
+	l := &a.nowPlaying.lyrics
+	if l.videoID != a.current.VideoID || l.total > 0 || a.total <= 0 {
+		return
+	}
+	a.loadLyrics()
+}
+
+// lyricSources are where a track's lyrics come from, in the order they are
+// tried: Better Lyrics, which times each word, then YouTube Music, the
+// service the track plays from, then LRCLIB.
+type lyricSources struct {
+	betterLyrics func(ctx context.Context, q betterlyrics.Query) ([]lyrics.Line, error)
+	lrclib       lyricsSource
+}
+
+// findLyrics finds a track's lyrics, timed when it can, from the first source
+// that has them. A source that fails is not an error: the next is tried, and
+// no lyrics at all is an empty result.
+func findLyrics(ctx context.Context, sources lyricSources, client *youtube.Client, item youtube.MusicItem, total time.Duration) (loadedLyrics, error) {
 	var found, plain loadedLyrics
 	var lookupErr error
-	if lyrics, err := client.GetLyrics(ctx, item.VideoID); err == nil {
-		plain = loadedLyrics{text: strings.TrimSpace(lyrics.Description), footer: lyrics.Footer}
-		for _, line := range lyrics.Timed {
-			found.synced = append(found.synced, lrclib.Line{At: line.Start, Text: line.Text})
+	// A track that is not resolved yet has no length of its own; the one its
+	// row lists is as good, and both services take a lookup without one.
+	if total <= 0 {
+		total = parseDuration(item.Duration)
+	}
+	if sources.betterLyrics != nil {
+		lines, err := sources.betterLyrics(ctx, betterlyrics.Query{Title: item.Title, Artist: item.Artist, Album: item.Album, Duration: total})
+		switch {
+		case err != nil:
+			log.Printf("lyrics: betterlyrics lookup failed: %v", err)
+			lookupErr = err
+		case len(lines) > 0:
+			found.synced, found.footer = lines, "Source: Better Lyrics"
 		}
-	} else if ctx.Err() != nil {
+	}
+	if ctx.Err() != nil {
 		return found, ctx.Err()
 	}
-	// Where the lyrics came from: what YouTube Music says of them, or itself.
-	found.footer = cmp.Or(plain.footer, "Source: YouTube Music")
-	if len(found.synced) == 0 && fetch != nil {
-		// A track that is not resolved yet has no length of its own; the one
-		// its row lists is as good, and LRCLIB takes a lookup without one.
-		if total <= 0 {
-			total = parseDuration(item.Duration)
+	// Lines of words say what the plain text would, so YouTube Music is only
+	// asked when Better Lyrics had none.
+	if len(found.synced) == 0 {
+		if tab, err := client.GetLyrics(ctx, item.VideoID); err == nil {
+			plain = loadedLyrics{text: strings.TrimSpace(tab.Description), footer: tab.Footer}
+			for _, line := range tab.Timed {
+				found.synced = append(found.synced, lyrics.Line{At: line.Start, Text: line.Text})
+			}
+		} else if ctx.Err() != nil {
+			return found, ctx.Err()
 		}
-		got, err := fetch(ctx, lrclib.Query{Title: item.Title, Artist: item.Artist, Album: item.Album, Duration: total})
+		// Where the lyrics came from: what YouTube Music says of them, or
+		// itself.
+		found.footer = cmp.Or(plain.footer, "Source: YouTube Music")
+	}
+	if len(found.synced) == 0 && sources.lrclib != nil {
+		got, err := sources.lrclib(ctx, lrclib.Query{Title: item.Title, Artist: item.Artist, Album: item.Album, Duration: total})
 		if err != nil {
 			log.Printf("lyrics: lrclib lookup failed: %v", err)
-			lookupErr = err
+			lookupErr = cmp.Or(lookupErr, err)
 		}
 		if got != nil && len(got.Synced) > 0 {
 			found.synced, found.footer = got.Synced, "Source: LRCLIB"
@@ -102,9 +157,7 @@ func findLyrics(ctx context.Context, fetch lyricsSource, client *youtube.Client,
 		// are cleaned of that, so they stand in for it when there are any.
 		if plain.text == "" && got != nil && got.Plain != "" && len(found.synced) == 0 {
 			plain = loadedLyrics{text: got.Plain, footer: "Source: LRCLIB"}
-			if len(found.synced) == 0 {
-				found.footer = plain.footer
-			}
+			found.footer = plain.footer
 		}
 	}
 	found.text = plain.text
@@ -113,11 +166,7 @@ func findLyrics(ctx context.Context, fetch lyricsSource, client *youtube.Client,
 			item.VideoID, item.Title, item.Artist, item.Album, total, found.footer, len(found.synced), len(found.text))
 	}()
 	if found.text == "" && len(found.synced) > 0 {
-		lines := make([]string, len(found.synced))
-		for i, line := range found.synced {
-			lines[i] = line.Text
-		}
-		found.text = strings.TrimSpace(strings.Join(lines, "\n"))
+		found.text = lyrics.Text(found.synced)
 	}
 	if found.text == "" && len(found.synced) == 0 {
 		return found, lookupErr
@@ -190,7 +239,8 @@ func (a *app) syncedLyrics(c *ui.Context) {
 	sc := m3.Of(c).Scheme
 	l := &a.nowPlaying.lyrics
 	scroll := &a.nowPlaying.lyricsScroll
-	now := lrclib.IndexAt(l.synced, a.playbackPosition())
+	at := a.playbackPosition()
+	now := lyrics.IndexAt(l.synced, at)
 	if l.followed != now {
 		l.followed, l.centerPending = now, true
 	}
@@ -202,7 +252,7 @@ func (a *app) syncedLyrics(c *ui.Context) {
 	view.Padding(pad, 16, pad).Children(func() {
 		ui.Column(c).FillWidth().Children(func() {
 			for i, line := range l.synced {
-				a.lyricLine(c, line, i, now, scroll, viewport, sc)
+				a.lyricLine(c, line, at, i, now, scroll, viewport, sc)
 			}
 		})
 	})
@@ -223,8 +273,28 @@ func lyricLook(distance int) (opacity, size float32) {
 	return max(0.4-0.12*k, 0.08), max(0.8-0.04*k, 0.6)
 }
 
-// lyricLine is one line of the lyrics; now is the line being sung.
-func (a *app) lyricLine(c *ui.Context, line lrclib.Line, i, now int, scroll *ui.ScrollState, viewport ui.Rect, sc m3.Scheme) {
+// unsungWord is how much of a word still to be sung shows, beside the ones
+// already sung.
+const unsungWord = 0.35
+
+// lyricWords is a line in the spans of its words, each lit once it starts, so
+// that a line fills in as it is sung.
+func lyricWords(line lyrics.Line, at time.Duration, sc m3.Scheme) []ui.Span {
+	sung := lyrics.IndexWordAt(line.Words, at)
+	spans := make([]ui.Span, len(line.Words))
+	for i, word := range line.Words {
+		color := sc.OnSurface.Alpha(unsungWord)
+		if i <= sung {
+			color = sc.OnSurface
+		}
+		spans[i] = ui.Span{Text: word.Text, Color: color}
+	}
+	return spans
+}
+
+// lyricLine is one line of the lyrics; now is the line being sung, at the
+// position the song is at.
+func (a *app) lyricLine(c *ui.Context, line lyrics.Line, at time.Duration, i, now int, scroll *ui.ScrollState, viewport ui.Rect, sc m3.Scheme) {
 	l := &a.nowPlaying.lyrics
 	distance := i - now
 	if distance < 0 {
@@ -240,6 +310,10 @@ func (a *app) lyricLine(c *ui.Context, line lrclib.Line, i, now int, scroll *ui.
 	size = m3.Animate(row, "size", size, m3.EffectsSlow)
 	row.Opacity(opacity).TransformOrigin(0, 0.5).Scale(size, size)
 	row.Children(func() {
+		if len(line.Words) > 0 {
+			m3.EmphasizedRichText(c, m3.HeadlineSmall, lyricWords(line, at, sc)...).FontWeight(800).LineHeight(1.25)
+			return
+		}
 		m3.EmphasizedText(c, m3.HeadlineSmall, text).FontWeight(800).TextColor(sc.OnSurface).LineHeight(1.25)
 	})
 	if row.Clicked() {

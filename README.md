@@ -51,7 +51,9 @@ scrobble your listening to Last.fm.
   volume, and a queue you can see and change. A small player follows you while
   you browse, and the full player shows the queue, lyrics and related songs.
 - **Lyrics that follow the song.** The line being sung is highlighted as the
-  song plays. You can switch to plain text.
+  song plays, and word-synced lyrics light each word as it is reached. Meiro
+  takes them from Better Lyrics, YouTube Music or LRCLIB. You can switch to
+  plain text.
 - **Music that keeps going.** When your queue ends, Meiro adds similar songs so
   the music does not stop.
 - **Pick up where you left off.** Open Meiro again and your queue and song are

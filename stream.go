@@ -102,6 +102,7 @@ func (a *app) streamAudio(item youtube.MusicItem, startAt time.Duration, changed
 		a.applyLoudness()
 		if found.total > 0 {
 			a.total = found.total
+			a.refreshLyrics()
 		}
 		if found.playErr != nil {
 			a.failPlayback(item, "player could not open", found.playErr.Error())

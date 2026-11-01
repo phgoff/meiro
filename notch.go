@@ -10,7 +10,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"github.com/elianiva/meiro/internal/lrclib"
+	"github.com/elianiva/meiro/internal/lyrics"
 	"github.com/elianiva/meiro/m3"
 )
 
@@ -482,7 +482,7 @@ func (a *app) notchLyrics(c *ui.Context) {
 			}
 		})
 	case len(l.synced) > 0:
-		now := lrclib.IndexAt(l.synced, a.playbackPosition())
+		now := lyrics.IndexAt(l.synced, a.playbackPosition())
 		motion := m3.EffectsSlow.Motion()
 		motion.Position = true
 		motion.Enter = &ui.Motion{Y: 8}

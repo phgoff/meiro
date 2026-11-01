@@ -247,3 +247,14 @@ func Text(c *ui.Context, r Role, s string) ui.Element {
 func EmphasizedText(c *ui.Context, r Role, s string) ui.Element {
 	return r.Style(ui.Text(c, s), true).TextColor(Of(c).Scheme.OnSurface)
 }
+
+// RichText shows text whose spans differ in style, in a role of the type
+// scale, in the colour of text on a surface.
+func RichText(c *ui.Context, r Role, spans ...ui.Span) ui.Element {
+	return r.Style(ui.RichText(c, spans...), false).TextColor(Of(c).Scheme.OnSurface)
+}
+
+// EmphasizedRichText is RichText in the role's emphasised weight.
+func EmphasizedRichText(c *ui.Context, r Role, spans ...ui.Span) ui.Element {
+	return r.Style(ui.RichText(c, spans...), true).TextColor(Of(c).Scheme.OnSurface)
+}

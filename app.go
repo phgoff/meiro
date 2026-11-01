@@ -12,11 +12,13 @@ import (
 
 	"github.com/elianiva/meiro/internal/artwork"
 	"github.com/elianiva/meiro/internal/audio"
+	"github.com/elianiva/meiro/internal/betterlyrics"
 	"github.com/elianiva/meiro/internal/cookies"
 	"github.com/elianiva/meiro/internal/discordrpc"
 	"github.com/elianiva/meiro/internal/history"
 	"github.com/elianiva/meiro/internal/lrclib"
 	"github.com/elianiva/meiro/internal/lru"
+	"github.com/elianiva/meiro/internal/lyrics"
 	"github.com/elianiva/meiro/internal/proc"
 	"github.com/elianiva/meiro/internal/report"
 	"github.com/elianiva/meiro/internal/settings"
@@ -183,6 +185,9 @@ type app struct {
 	// settings.
 	eqDebounce task
 
+	// betterLyrics finds a track's lyrics on Better Lyrics, which times each
+	// word; tests replace it.
+	betterLyrics func(ctx context.Context, q betterlyrics.Query) ([]lyrics.Line, error)
 	// lyricsSource finds a track's lyrics on LRCLIB; tests replace it.
 	lyricsSource lyricsSource
 	// collectInfo reads the versions of the helper programs, which runs
@@ -229,6 +234,7 @@ func newApp() *app {
 		return youtube.NewClient(youtube.Options{CookieAuth: auth})
 	}, cookies.Sources)
 	a.thumbs = artwork.New(&http.Client{Timeout: 30 * time.Second}, a.refresh)
+	a.betterLyrics = new(betterlyrics.Client).Get
 	a.lyricsSource = new(lrclib.Client).Get
 	a.collectInfo = report.Collect
 	return a
